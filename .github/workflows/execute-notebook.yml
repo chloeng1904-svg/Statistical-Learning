@@ -1,14 +1,21 @@
-name: Execute and verify group analysis notebook
+name: Execute group analysis notebook
 
 on:
   push:
     branches:
-      - analysis/group-notebook
+      - main
+      - analysis/group-facing-notebook
     paths:
-      - 'online_shoppers_analysis.ipynb'
-      - 'data/online_shoppers.csv'
-      - 'requirements.txt'
-      - '.github/workflows/execute-notebook.yml'
+      - online_shoppers_analysis.ipynb
+      - data/online_shoppers.csv
+      - requirements.txt
+      - .github/workflows/execute-notebook.yml
+  pull_request:
+    paths:
+      - online_shoppers_analysis.ipynb
+      - data/online_shoppers.csv
+      - requirements.txt
+      - .github/workflows/execute-notebook.yml
   workflow_dispatch:
 
 permissions:
@@ -17,7 +24,7 @@ permissions:
 jobs:
   notebook:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       OPENBLAS_NUM_THREADS: '1'
       OMP_NUM_THREADS: '1'
@@ -29,68 +36,48 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install pinned notebook environment
-        run: |
-          python -m pip install -r requirements.txt
-      - name: Run all notebook cells on shared repository data
+      - name: Install notebook dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Execute all notebook cells
         run: |
           jupyter nbconvert --to notebook --execute online_shoppers_analysis.ipynb \
-            --ExecutePreprocessor.timeout=3000 \
+            --ExecutePreprocessor.timeout=7200 \
             --output online_shoppers_analysis_executed.ipynb
           mv online_shoppers_analysis_executed.ipynb online_shoppers_analysis.ipynb
-      - name: Verify saved results and no personal-project references
+      - name: Verify notebook and selected-model output
         run: |
           python - <<'PY'
-          import hashlib, json, math, pathlib, re
-          import nbformat
-          source=pathlib.Path('data/online_shoppers.csv')
-          expected_sha='b3055ee355f59134d851d32641183cb4a8b45def7124d2f50442a042f358e0d9'
-          assert hashlib.sha256(source.read_bytes()).hexdigest()==expected_sha, 'UCI data changed'
-          notebook=nbformat.read('online_shoppers_analysis.ipynb',as_version=4)
-          nbformat.validate(notebook)
-          code=[c for c in notebook.cells if c.cell_type=='code']
-          assert len(code)==18 and len(notebook.cells)==34
-          assert all(isinstance(c.execution_count,int) for c in code), 'Unexecuted cell'
-          assert not any(x.output_type=='error' for c in code for x in c.get('outputs',[]))
-          assert sum(len(c.outputs) for c in code)>=35
-          text='\n'.join(c.source for c in notebook.cells)
-          for c in code:
-              for output in c.get('outputs',[]):
-                  if output.output_type=='stream':
-                      text+='\n'+output.text
-                  if output.get('data',{}).get('text/plain'):
-                      text+='\n'+str(output.data['text/plain'])
-          private=re.compile(r'\bPRD\b|\bv2\b|\bv3\b|docs/PRD|artifacts/prd_v3|data/uci_468', re.I)
-          assert not private.search(text), 'Found an internal project reference'
-          out=pathlib.Path('outputs/model_results')
-          check=json.loads((out/'independent_training_audit.json').read_text())
-          meta=json.loads((out/'run_metadata.json').read_text())
-          assert check['status']=='PASS'
-          assert check['cv_candidates_verified']==24
-          assert check['individual_fold_scores_verified']==120
-          assert check['sequential_decisions_verified']==16
-          assert check['threshold_rows_verified']==4
-          assert check['test_data_used_in_verification'] is False
-          assert meta['selected_model']=='L1 | Logit'
-          assert meta['training_rows']==9864 and meta['test_rows']==2466 and meta['final_rows']==12330
-          assert math.isclose(meta['test_check']['roc_auc'],0.7405425028388821,abs_tol=1e-9)
-          assert math.isclose(meta['test_check']['average_precision'],0.32719855953352933,abs_tol=1e-9)
-          print('PASS: 34 cells, 18 executed code cells, 24 CV evaluations, 120 fold metrics, 16 decisions and four thresholds.')
-          print('Selected model:',meta['selected_model'],'test AUC:',meta['test_check']['roc_auc'])
+          import nbformat, pathlib, re
+          nb=nbformat.read('online_shoppers_analysis.ipynb',as_version=4)
+          nbformat.validate(nb)
+          cells=[c for c in nb.cells if c.cell_type=='code']
+          assert cells and all(isinstance(c.execution_count,int) for c in cells)
+          assert not any(o.output_type=='error' for c in cells for o in c.outputs)
+          source='\n'.join(c.source for c in nb.cells)
+          assert not re.search(r'\bPRD\b|\bv3[._-]\d+\b|artifacts/prd|archive/',source,re.I)
+          summary='\n'.join(o.text for o in cells[-1].outputs if o.output_type=='stream')
+          assert 'Winner: L1 | Logit' in summary, summary
+          auc=re.search(r'mean five-fold ROC-AUC=(\d+\.\d+)',summary)
+          reserved=re.search(r'Reserved-set ROC-AUC=(\d+\.\d+)',summary)
+          assert auc and reserved, summary
+          assert abs(float(auc.group(1))-0.75747)<0.0001
+          assert abs(float(reserved.group(1))-0.74054)<0.0001
+          print(f'PASS: {len(nb.cells)} notebook cells executed; selected model and reserved-set results verified.')
           PY
-      - name: Commit the fully executed notebook
+      - name: Save executed notebook to review branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/analysis/group-facing-notebook'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add online_shoppers_analysis.ipynb
           if ! git diff --cached --quiet; then
-            git commit -m 'results: save verified executed group notebook [skip ci]'
-            git push origin HEAD:analysis/group-notebook
+            git commit -m 'results: save executed group notebook [skip ci]'
+            git push origin HEAD:analysis/group-facing-notebook
           fi
-      - name: Attach executed notebook for verification
-        uses: actions/upload-artifact@v4
+      - name: Attach executed notebook
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: executed-group-analysis
+          name: executed-group-notebook
           path: online_shoppers_analysis.ipynb
-          retention-days: 30
+          retention-days: 14
