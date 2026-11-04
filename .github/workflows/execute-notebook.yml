@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - analysis/group-facing-notebook
+      - 'analysis/**'
     paths:
       - online_shoppers_analysis.ipynb
       - data/online_shoppers.csv
@@ -65,14 +65,14 @@ jobs:
           print(f'PASS: {len(nb.cells)} notebook cells executed; selected model and reserved-set results verified.')
           PY
       - name: Save executed notebook to review branch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/analysis/group-facing-notebook'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/analysis/')
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add online_shoppers_analysis.ipynb
           if ! git diff --cached --quiet; then
             git commit -m 'results: save executed group notebook [skip ci]'
-            git push origin HEAD:analysis/group-facing-notebook
+            git push origin HEAD:${GITHUB_REF_NAME}
           fi
       - name: Attach executed notebook
         if: always()
