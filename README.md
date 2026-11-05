@@ -43,7 +43,7 @@ Models use a shared **seed-42 stratified 80/20 split** (9,864 training / 2,466 p
 
 ## Main results
 
-The six-way winner is **L5 Logistic Regression** (internal trial L13): mean five-fold training **ROC-AUC 0.75892** and mean **AP 0.34236**. The runner-up is the pruned Entropy tree (ROC-AUC **0.74414**). The retained Bernoulli Naive Bayes model B6 has ROC-AUC **0.73953** and AP **0.30574**.
+The six-way winner is **L5 Logistic Regression**: mean five-fold training **ROC-AUC 0.75892** and mean **AP 0.34236**. The runner-up is the pruned Entropy tree (ROC-AUC **0.74414**). The retained Bernoulli Naive Bayes model B6 has ROC-AUC **0.73953** and AP **0.30574**.
 
 The previously consulted reserved sample produces **ROC-AUC 0.74313** and **AP 0.33358**. These results are descriptive: the reserved set was examined during project development, so it is **not an untouched independent holdout**. The final selected recipe is also refitted on the full dataset.
 
