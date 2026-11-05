@@ -24,7 +24,7 @@ permissions:
 jobs:
   notebook:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       OPENBLAS_NUM_THREADS: '1'
       OMP_NUM_THREADS: '1'
@@ -44,25 +44,46 @@ jobs:
             --ExecutePreprocessor.timeout=7200 \
             --output online_shoppers_analysis_executed.ipynb
           mv online_shoppers_analysis_executed.ipynb online_shoppers_analysis.ipynb
-      - name: Verify notebook and selected-model output
+      - name: Verify executed notebook and analysis values
         run: |
           python - <<'PY'
           import nbformat, pathlib, re
-          nb=nbformat.read('online_shoppers_analysis.ipynb',as_version=4)
+          import pandas as pd
+          nb = nbformat.read('online_shoppers_analysis.ipynb', as_version=4)
           nbformat.validate(nb)
-          cells=[c for c in nb.cells if c.cell_type=='code']
-          assert cells and all(isinstance(c.execution_count,int) for c in cells)
-          assert not any(o.output_type=='error' for c in cells for o in c.outputs)
-          source='\n'.join(c.source for c in nb.cells)
-          assert not re.search(r'\bPRD\b|\bv3[._-]\d+\b|artifacts/prd|archive/',source,re.I)
-          summary='\n'.join(o.text for o in cells[-1].outputs if o.output_type=='stream')
-          assert 'Winner: L1 | Logit' in summary, summary
-          auc=re.search(r'mean five-fold ROC-AUC=(\d+\.\d+)',summary)
-          reserved=re.search(r'Reserved-set ROC-AUC=(\d+\.\d+)',summary)
-          assert auc and reserved, summary
-          assert abs(float(auc.group(1))-0.75747)<0.0001
-          assert abs(float(reserved.group(1))-0.74054)<0.0001
-          print(f'PASS: {len(nb.cells)} notebook cells executed; selected model and reserved-set results verified.')
+          code = [cell for cell in nb.cells if cell.cell_type == 'code']
+          assert len(code) == 31
+          assert all(isinstance(cell.execution_count, int) for cell in code)
+          assert not any(output.output_type == 'error' for cell in code for output in cell.outputs)
+          source = '\n'.join(cell.source for cell in nb.cells)
+          assert not re.search(r'\bPRD\b|\bv3[._-]\d+\b|artifacts/prd|archive/versions/', source, re.I)
+          assert 'data/online_shoppers.csv' in source
+          assert 'len(DISPLAY_ALIAS_ROWS)==28' in source
+          assert len(pd.read_csv('data/online_shoppers.csv')) == 12330
+
+          summary = '\n'.join(output.text for output in code[-1].outputs
+                              if output.output_type == 'stream')
+          assert 'Winner: L5 | Logit' in summary, summary
+          assert 'Sequential candidate checks: 43 planned, 38 scored, 5 inapplicable.' in summary, summary
+          auc = re.search(r'mean five-fold ROC-AUC=(\d+\.\d+)', summary)
+          ap = re.search(r'mean AP=(\d+\.\d+)', summary)
+          reserved = re.search(r'Reserved-set check: ROC-AUC=(\d+\.\d+); AP=(\d+\.\d+)', summary)
+          assert auc and ap and reserved, summary
+          assert abs(float(auc.group(1)) - 0.75892) < 0.0001
+          assert abs(float(ap.group(1)) - 0.34236) < 0.0001
+          assert abs(float(reserved.group(1)) - 0.74313) < 0.0001
+          assert abs(float(reserved.group(2)) - 0.33358) < 0.0001
+
+          for family, marker in [('Logit','L'),('LDA','D'),('GaussianNB','G'),('BernoulliNB','B')]:
+              found = [cell for cell in code if f"display_family('{family}')" in cell.source]
+              assert len(found) == 1, (family, len(found))
+              texts = '\n'.join((''.join(o.data.get('text/plain',''))
+                                  if o.output_type in ('display_data','execute_result') else '')
+                                 for o in found[0].outputs)
+              assert all(re.search(r'\b'+marker+str(i)+r'\b',texts) for i in range(7)), family
+
+          print(f'PASS: {len(code)} executed code cells; 28 displayed classifier specifications; '
+                '43 planned trials / 38 scored; L5 selected; CV and reserved scores match.')
           PY
       - name: Save executed notebook to review branch
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/analysis/')
