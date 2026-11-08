@@ -56,27 +56,33 @@ jobs:
           nb = nbformat.read('online_shoppers_analysis.ipynb', as_version=4)
           nbformat.validate(nb)
           code = [cell for cell in nb.cells if cell.cell_type == 'code']
-          assert len(code) == 31
+          assert len(code) == 33
           assert all(isinstance(cell.execution_count, int) for cell in code)
           assert not any(output.output_type == 'error' for cell in code for output in cell.outputs)
           source = '\n'.join(cell.source for cell in nb.cells)
           assert not re.search(r'\bPRD\b|\bv3[._-]\d+\b|artifacts/prd|archive/versions/', source, re.I)
           assert 'data/online_shoppers.csv' in source
-          assert 'len(DISPLAY_ALIAS_ROWS)==28' in source
+          assert 'T_STAR=C_FP/(C_FP+C_FN)' in source
+          assert 'ALL_FINALISTS_AT_T' in source
           assert len(pd.read_csv('data/online_shoppers.csv')) == 12330
 
           summary = '\n'.join(output.text for output in code[-1].outputs
                               if output.output_type == 'stream')
-          assert 'Winner: L5 | Logit' in summary, summary
+          assert 'Winner (PR-AUC): L5 | Logit' in summary, summary
           assert 'Sequential candidate checks: 43 planned, 38 scored, 5 inapplicable.' in summary, summary
+          ap = re.search(r'mean five-fold AP=(\d+\.\d+)', summary)
           auc = re.search(r'mean five-fold ROC-AUC=(\d+\.\d+)', summary)
-          ap = re.search(r'mean AP=(\d+\.\d+)', summary)
-          reserved = re.search(r'Reserved-set check: ROC-AUC=(\d+\.\d+); AP=(\d+\.\d+)', summary)
+          reserved = re.search(r'Reserved-set check: AP=(\d+\.\d+); ROC-AUC=(\d+\.\d+)', summary)
           assert auc and ap and reserved, summary
-          assert abs(float(auc.group(1)) - 0.75892) < 0.0001
-          assert abs(float(ap.group(1)) - 0.34236) < 0.0001
-          assert abs(float(reserved.group(1)) - 0.74313) < 0.0001
-          assert abs(float(reserved.group(2)) - 0.33358) < 0.0001
+          assert abs(float(ap.group(1)) - 0.34207) < 0.0001
+          assert abs(float(auc.group(1)) - 0.75095) < 0.0001
+          assert abs(float(reserved.group(1)) - 0.32534) < 0.0001
+          assert abs(float(reserved.group(2)) - 0.73804) < 0.0001
+
+          finalist_cell = [cell for cell in code if 'ALL_FINALISTS_AT_T=pd.DataFrame' in cell.source]
+          assert len(finalist_cell) == 1
+          finalist_text = ''.join(o.get('text', '') for o in finalist_cell[0].outputs if o.output_type == 'stream')
+          assert 'cheapest finalist is' in finalist_text, finalist_text
 
           for family, marker in [('Logit','L'),('LDA','D'),('GaussianNB','G'),('BernoulliNB','B')]:
               found = [cell for cell in code if f"display_family('{family}')" in cell.source]
@@ -87,7 +93,8 @@ jobs:
               assert all(re.search(r'\b'+marker+str(i)+r'\b',texts) for i in range(7)), family
 
           print(f'PASS: {len(code)} executed code cells; 28 displayed classifier specifications; '
-                '43 planned trials / 38 scored; L5 selected; CV and reserved scores match.')
+                '43 planned trials / 38 scored; L5 selected by AP; CV and reserved scores match; '
+                't* applied to every finalist.')
           PY
       - name: Save executed notebook to review branch
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/analysis/')
